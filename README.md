@@ -1,1 +1,644 @@
-# quizrally
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <!-- スマホでの自由なピンチイン・ピンチアウト（拡大縮小）を標準許可 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10.0, user-scalable=yes">
+    <title>クイズラリーゲーム - 1列8問</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            min-height: 100vh;
+            background-color: #0f172a; /* PC閲覧時の外枠背景 */
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            /* タッチデバイスでのスワイプ・ピンチ操作を滑らかにする */
+            touch-action: pan-x pan-y pinch-zoom;
+            overflow-x: auto;
+            overflow-y: auto;
+        }
+
+        /* アプリ全体のメインコンテナ（ヘッダーと虫眼鏡含むズーム対象） */
+        #app-container {
+            width: 100%;
+            max-width: 440px;
+            margin: 0 auto;
+            min-height: 100vh;
+            background-color: #f8fafc;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            /* Transform ズームの基準点を上部中央に設定 */
+            transform-origin: top center;
+            transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+        }
+
+        @media (min-width: 441px) {
+            #app-container {
+                min-height: 90vh;
+                margin: 20px auto;
+                border-radius: 28px;
+                overflow: hidden;
+                border: 8px solid #334155;
+            }
+        }
+
+        /* 約1cm × 1cm (38px × 38px) の穴埋めマス */
+        .char-box {
+            width: 38px;
+            height: 38px;
+            min-width: 38px;
+            min-height: 38px;
+            border: 2px solid #cbd5e1;
+            background-color: #ffffff;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: 800;
+            font-size: 18px;
+            color: #0f172a;
+            border-radius: 8px;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+            transition: all 0.25s ease;
+        }
+
+        .char-box.solved {
+            background-color: #dcfce7;
+            border-color: #22c55e;
+            color: #15803d;
+            box-shadow: 0 2px 4px rgba(34, 197, 94, 0.2);
+        }
+
+        /* 虫眼鏡マーク専用ボックス (約1cm x 1cm / 38px x 38px) */
+        .magnifier-box {
+            width: 38px;
+            height: 38px;
+            min-width: 38px;
+            min-height: 38px;
+            border-radius: 10px;
+            background-color: #e0e7ff;
+            color: #4f46e5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #c7d2fe;
+            flex-shrink: 0;
+        }
+
+        /* モーダルレイヤー */
+        .view-layer {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            background-color: #f8fafc;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 100;
+        }
+
+        .view-layer.hidden-layer {
+            transform: translateY(100%);
+            pointer-events: none;
+        }
+
+        .view-layer.active-layer {
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        /* フローティングズーム操作バー */
+        .floating-zoom-bar {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 50;
+            backdrop-filter: blur(10px);
+            background-color: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+            border-radius: 9999px;
+            padding: 6px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: white;
+        }
+
+        @keyframes pulse-subtle {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+        }
+        .pulse-anim {
+            animation: pulse-subtle 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 画面右下に常駐するズームコントロール (画面全体のCSS scaleを操作) -->
+    <div class="floating-zoom-bar">
+        <span id="zoom-label" class="font-mono text-xs font-bold text-indigo-300 mr-1">100%</span>
+        
+        <button onclick="changeZoom(-0.1)" class="w-8 h-8 rounded-full bg-slate-700 hover:bg-slate-600 active:bg-slate-500 font-black text-white text-sm flex items-center justify-center transition-all active:scale-95 shadow" title="縮小">
+            ー
+        </button>
+
+        <button onclick="resetZoom()" class="px-2.5 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-400 font-bold text-xs text-white flex items-center justify-center transition-all active:scale-95 shadow" title="100%に戻す">
+            100%
+        </button>
+
+        <button onclick="changeZoom(0.1)" class="w-8 h-8 rounded-full bg-slate-700 hover:bg-slate-600 active:bg-slate-500 font-black text-white text-sm flex items-center justify-center transition-all active:scale-95 shadow" title="拡大">
+            ＋
+        </button>
+    </div>
+
+    <!-- メインアプリコンテナ（ズーム操作時にヘッダーや虫眼鏡マークを含めて全体が縮小・拡大される） -->
+    <div id="app-container">
+
+        <!-- HEADER (ヘッダー部分) -->
+        <header class="bg-white border-b border-slate-200 h-[60px] flex items-center justify-between px-3.5 shrink-0 shadow-sm z-30 sticky top-0">
+            <div class="flex items-center gap-3">
+                <!-- 左上の1cm×1cm (38px×38px) 虫眼鏡マーク（クリックイベントなし・拡大縮小対象） -->
+                <div class="magnifier-box" title="クイズラリー">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+                
+                <div>
+                    <h1 class="text-base font-extrabold text-slate-800 leading-none">クイズラリー</h1>
+                    <p class="text-[11px] text-slate-400 font-bold mt-1">全8問・1列穴埋めチャレンジ</p>
+                </div>
+            </div>
+
+            <!-- 右側: 進捗バッジ & リセットボタン -->
+            <div class="flex items-center gap-2">
+                <span id="progress-badge" class="text-xs font-extrabold px-3 py-1 rounded-full bg-indigo-100 text-indigo-700">
+                    0 / 8
+                </span>
+                <button onclick="openResetModal()" class="text-slate-400 hover:text-rose-500 p-2 rounded-xl active:bg-slate-100 transition-colors" title="進捗リセット">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- 問題一覧（全8問・縦1列に配置） -->
+        <main class="flex-1 p-3.5 overflow-y-auto">
+            <div id="quiz-list" class="flex flex-col gap-3 w-full pb-16">
+                <!-- JavaScriptで8問分カードが挿入されます -->
+            </div>
+        </main>
+
+        <!-- ================= DETAIL / ANSWER MODAL VIEW ================= -->
+        <div id="detail-view" class="view-layer hidden-layer">
+            <!-- 解答画面ヘッダー -->
+            <header class="bg-indigo-600 text-white h-[56px] flex items-center justify-between px-3.5 shrink-0 shadow-md">
+                <div class="flex items-center gap-2">
+                    <button onclick="closeDetail()" class="p-2 active:bg-indigo-700 rounded-xl flex items-center justify-center transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                        </svg>
+                    </button>
+                    <h2 id="detail-title" class="text-base font-bold">問題 1</h2>
+                </div>
+                <span id="detail-status-tag" class="text-xs px-2.5 py-1 rounded-full bg-indigo-500 text-indigo-100 font-semibold">未回答</span>
+            </header>
+
+            <!-- 解答エリア -->
+            <main class="flex-1 p-4 flex flex-col pt-6 overflow-y-auto max-w-md mx-auto w-full">
+                <!-- 問題文カード -->
+                <div class="bg-white border-2 border-indigo-100 rounded-2xl p-5 mb-6 shadow-sm text-center">
+                    <span class="text-xs font-bold text-indigo-500 uppercase tracking-wider block mb-1.5">QUESTION</span>
+                    <p id="detail-question" class="text-lg font-extrabold text-slate-800 leading-snug">
+                        <!-- JSで挿入 -->
+                    </p>
+                </div>
+
+                <!-- 回答用ターゲット穴埋めマス表示 -->
+                <div class="flex justify-center gap-2.5 mb-8" id="detail-target-boxes">
+                    <!-- JSで挿入 -->
+                </div>
+
+                <!-- 回答フォーム -->
+                <div id="answer-form-area" class="w-full flex flex-col gap-3">
+                    <input type="text" id="answer-input" placeholder="ひらがなで入力" autocomplete="off" class="w-full border-2 border-slate-300 rounded-xl px-4 py-3.5 text-lg text-center font-extrabold text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white bg-slate-50 transition-colors shadow-inner">
+                    
+                    <button onclick="checkAnswer()" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-extrabold py-3.5 rounded-xl shadow-md text-base transition-all">
+                        回答する
+                    </button>
+                </div>
+
+                <!-- メッセージ表示 -->
+                <div id="msg-box" class="hidden mt-4 text-center font-bold py-3 px-4 rounded-xl text-sm w-full"></div>
+            </main>
+        </div>
+
+        <!-- ================= RESET CONFIRMATION MODAL ================= -->
+        <div id="reset-modal" class="view-layer hidden-layer bg-slate-900/60 backdrop-blur-sm justify-center items-center p-5 z-[150]">
+            <div class="bg-white text-slate-800 rounded-3xl p-6 shadow-2xl max-w-xs w-full text-center border border-slate-100">
+                <div class="w-12 h-12 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center text-2xl mx-auto mb-3">
+                    ⚠️
+                </div>
+                <h3 class="text-lg font-extrabold text-slate-800 mb-1">進行状況のリセット</h3>
+                <p class="text-xs text-slate-500 font-semibold mb-6">これまでの回答内容がすべて消去されます。本当によろしいですか？</p>
+                
+                <div class="flex gap-2">
+                    <button onclick="closeResetModal()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl transition-all">
+                        キャンセル
+                    </button>
+                    <button onclick="confirmReset()" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl shadow-md transition-all">
+                        リセット
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= ALL CLEAR OVERLAY ================= -->
+        <div id="clear-view" class="view-layer hidden-layer bg-indigo-950/90 backdrop-blur-md justify-center items-center p-6 text-center text-white z-[200]">
+            <canvas id="confetti-canvas" class="absolute inset-0 pointer-events-none z-0"></canvas>
+            
+            <div class="relative z-10 bg-white text-slate-800 rounded-3xl p-6 shadow-2xl max-w-xs w-full flex flex-col items-center border border-indigo-100 pulse-anim">
+                <div class="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner">
+                    🏆
+                </div>
+                <h3 class="text-2xl font-extrabold text-slate-800 mb-1">ALL CLEAR!</h3>
+                <p class="text-xs text-slate-500 font-bold mb-5">おめでとうございます！全8問完全クリア！</p>
+                
+                <button onclick="closeClearModal()" class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold py-3 rounded-xl shadow-lg transition-all">
+                    結果を見る
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // クイズデータ（全8問）
+        const quizzes = [
+            { id: 1,ans: "りんご", solved: false },
+            { id: 2,ans: "ばなな", solved: false },
+            { id: 3,ans: "たいよう", solved: false },
+            { id: 4,ans: "くじら", solved: false },
+            { id: 5,ans: "ささ", solved: false },
+            { id: 6,ans: "にわとり", solved: false },
+            { id: 7,ans: "かさ", solved: false },
+            { id: 8,ans: "ほし", solved: false }
+        ];
+
+        let currentQuizId = null;
+        let currentZoom = 1.0; // 初期ズーム倍率
+        const STORAGE_KEY = 'quiz_rally_progress_v4';
+
+        // DOM要素
+        const appContainerEl = document.getElementById('app-container');
+        const zoomLabelEl = document.getElementById('zoom-label');
+        const quizListEl = document.getElementById('quiz-list');
+        const detailViewEl = document.getElementById('detail-view');
+        const detailTitleEl = document.getElementById('detail-title');
+        const detailQuestionEl = document.getElementById('detail-question');
+        const detailTargetBoxesEl = document.getElementById('detail-target-boxes');
+        const detailStatusTagEl = document.getElementById('detail-status-tag');
+        const answerInputEl = document.getElementById('answer-input');
+        const answerFormAreaEl = document.getElementById('answer-form-area');
+        const msgBoxEl = document.getElementById('msg-box');
+        const progressBadgeEl = document.getElementById('progress-badge');
+        const resetModalEl = document.getElementById('reset-modal');
+        const clearViewEl = document.getElementById('clear-view');
+
+        // ズーム変更関数（ヘッダー・虫眼鏡・リストすべて一体でスケール）
+        function changeZoom(delta) {
+            currentZoom = Math.min(Math.max(0.7, currentZoom + delta), 2.5); // 70%〜250%
+            applyZoom();
+        }
+
+        // ズームリセット関数
+        function resetZoom() {
+            currentZoom = 1.0;
+            applyZoom();
+        }
+
+        // ズーム適用（ヘッダーと虫眼鏡アイコンを含む #app-container 全体に適用）
+        function applyZoom() {
+            const percentage = Math.round(currentZoom * 100);
+            zoomLabelEl.textContent = `${percentage}%`;
+            appContainerEl.style.transform = `scale(${currentZoom})`;
+            
+            // スケール変更時の幅調整
+            if (currentZoom > 1.0) {
+                appContainerEl.style.width = `${100 / currentZoom}%`;
+            } else {
+                appContainerEl.style.width = '100%';
+            }
+        }
+
+        // 進捗ローディング
+        function loadProgress() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const solvedIds = JSON.parse(saved);
+                    quizzes.forEach(q => {
+                        q.solved = solvedIds.includes(q.id);
+                    });
+                }
+            } catch (e) {
+                console.error("Failed to load progress:", e);
+            }
+        }
+
+        // 進捗保存
+        function saveProgress() {
+            try {
+                const solvedIds = quizzes.filter(q => q.solved).map(q => q.id);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(solvedIds));
+            } catch (e) {
+                console.error("Failed to save progress:", e);
+            }
+        }
+
+        // リセットモーダル
+        function openResetModal() {
+            resetModalEl.classList.remove('hidden-layer');
+            resetModalEl.classList.add('active-layer');
+        }
+
+        function closeResetModal() {
+            resetModalEl.classList.remove('active-layer');
+            resetModalEl.classList.add('hidden-layer');
+        }
+
+        function confirmReset() {
+            quizzes.forEach(q => q.solved = false);
+            saveProgress();
+            renderQuizList();
+            closeResetModal();
+        }
+
+        // 縦1列×8行の問題カード描画
+        function renderQuizList() {
+            quizListEl.innerHTML = '';
+            let solvedCount = 0;
+
+            quizzes.forEach(q => {
+                if (q.solved) solvedCount++;
+
+                // カード要素
+                const card = document.createElement('div');
+                card.className = `w-full rounded-2xl border p-3 flex items-center justify-between cursor-pointer transition-all active:scale-[0.98] ${
+                    q.solved 
+                        ? 'bg-emerald-50/90 border-emerald-300 shadow-sm' 
+                        : 'bg-white border-slate-200 hover:border-indigo-300 shadow-md'
+                }`;
+                card.onclick = () => openDetail(q.id);
+
+                // 左側: 問題番号バッジ
+                const leftBox = document.createElement('div');
+                leftBox.className = 'flex items-center gap-2 shrink-0';
+
+                const badge = document.createElement('span');
+                badge.className = `text-xs font-black px-2.5 py-1 rounded-lg ${
+                    q.solved ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 border border-slate-200'
+                }`;
+                badge.textContent = `問 ${q.id}`;
+                leftBox.appendChild(badge);
+
+                // 中央: 1cm×1cm相当 (38px x 38px) の穴埋めマス群
+                const boxesContainer = document.createElement('div');
+                boxesContainer.className = 'flex gap-1.5 justify-center items-center flex-1 mx-2 overflow-x-auto py-1';
+
+                for (let i = 0; i < q.ans.length; i++) {
+                    const box = document.createElement('div');
+                    box.className = `char-box ${q.solved ? 'solved' : ''}`;
+                    box.textContent = q.solved ? q.ans[i] : '';
+                    boxesContainer.appendChild(box);
+                }
+
+                // 右側: ステータスアイコン
+                const rightBox = document.createElement('div');
+                rightBox.className = 'shrink-0 flex items-center';
+
+                if (q.solved) {
+                    rightBox.innerHTML = `
+                        <div class="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                    `;
+                } else {
+                    rightBox.innerHTML = `
+                        <div class="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </div>
+                    `;
+                }
+
+                card.appendChild(leftBox);
+                card.appendChild(boxesContainer);
+                card.appendChild(rightBox);
+                quizListEl.appendChild(card);
+            });
+
+            // ヘッダー進捗表示の更新
+            progressBadgeEl.textContent = `${solvedCount} / ${quizzes.length}`;
+            if (solvedCount === quizzes.length) {
+                progressBadgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-emerald-500 text-white animate-bounce";
+            } else {
+                progressBadgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-indigo-100 text-indigo-700";
+            }
+        }
+
+        // 解答モーダルオープン
+        function openDetail(id) {
+            const q = quizzes.find(x => x.id === id);
+            if (!q) return;
+
+            currentQuizId = id;
+            detailTitleEl.textContent = `問題 ${id}`;
+            detailQuestionEl.textContent = q.text;
+            answerInputEl.value = '';
+            msgBoxEl.className = 'hidden';
+
+            // モーダル内穴埋めマス表示
+            detailTargetBoxesEl.innerHTML = '';
+            for (let i = 0; i < q.ans.length; i++) {
+                const box = document.createElement('div');
+                box.className = `w-11 h-11 border-2 rounded-xl flex justify-center items-center text-2xl font-black ${
+                    q.solved 
+                        ? 'bg-emerald-100 border-emerald-500 text-emerald-800' 
+                        : 'bg-white border-slate-300 text-slate-400'
+                }`;
+                box.textContent = q.solved ? q.ans[i] : '?';
+                detailTargetBoxesEl.appendChild(box);
+            }
+
+            if (q.solved) {
+                detailStatusTagEl.textContent = '正解済み';
+                detailStatusTagEl.className = 'text-xs px-2.5 py-1 rounded-full bg-emerald-500 text-white font-semibold';
+                answerFormAreaEl.classList.add('hidden');
+                showMessage(`正解: 「${q.ans}」`, 'success');
+            } else {
+                detailStatusTagEl.textContent = '未回答';
+                detailStatusTagEl.className = 'text-xs px-2.5 py-1 rounded-full bg-indigo-500 text-indigo-100 font-semibold';
+                answerFormAreaEl.classList.remove('hidden');
+                setTimeout(() => answerInputEl.focus(), 300);
+            }
+
+            detailViewEl.classList.remove('hidden-layer');
+            detailViewEl.classList.add('active-layer');
+        }
+
+        // モーダルクローズ
+        function closeDetail() {
+            detailViewEl.classList.remove('active-layer');
+            detailViewEl.classList.add('hidden-layer');
+            answerInputEl.blur();
+            currentQuizId = null;
+            renderQuizList();
+        }
+
+        // 解答の答え合わせ
+        function checkAnswer() {
+            const q = quizzes.find(x => x.id === currentQuizId);
+            if (!q) return;
+
+            const inputVal = answerInputEl.value.trim().toLowerCase();
+            if (!inputVal) {
+                showMessage('ひらがなで答えを入力してください', 'error');
+                return;
+            }
+
+            if (inputVal === q.ans) {
+                q.solved = true;
+                saveProgress();
+                showMessage('🎉 正解です！', 'success');
+                answerFormAreaEl.classList.add('hidden');
+
+                // マス目更新
+                const boxes = detailTargetBoxesEl.children;
+                for (let i = 0; i < q.ans.length; i++) {
+                    if (boxes[i]) {
+                        boxes[i].textContent = q.ans[i];
+                        boxes[i].className = 'w-11 h-11 border-2 rounded-xl flex justify-center items-center text-2xl font-black bg-emerald-100 border-emerald-500 text-emerald-800';
+                    }
+                }
+
+                setTimeout(() => {
+                    closeDetail();
+                    checkAllClear();
+                }, 900);
+
+            } else {
+                showMessage('❌ おしい！もう一度かんがえてみよう', 'error');
+                answerInputEl.value = '';
+            }
+        }
+
+        function showMessage(text, type) {
+            msgBoxEl.textContent = text;
+            msgBoxEl.classList.remove('hidden');
+            if (type === 'success') {
+                msgBoxEl.className = 'mt-4 text-center font-bold py-3 px-4 rounded-xl text-sm w-full bg-emerald-100 text-emerald-800 border border-emerald-300 block';
+            } else {
+                msgBoxEl.className = 'mt-4 text-center font-bold py-3 px-4 rounded-xl text-sm w-full bg-rose-100 text-rose-700 border border-rose-300 block';
+            }
+        }
+
+        // 全問クリア判定
+        function checkAllClear() {
+            const allSolved = quizzes.every(q => q.solved);
+            if (allSolved) {
+                setTimeout(() => {
+                    clearViewEl.classList.remove('hidden-layer');
+                    clearViewEl.classList.add('active-layer');
+                    startConfetti();
+                }, 300);
+            }
+        }
+
+        function closeClearModal() {
+            clearViewEl.classList.remove('active-layer');
+            clearViewEl.classList.add('hidden-layer');
+        }
+
+        // 紙吹雪アニメーション
+        function startConfetti() {
+            const canvas = document.getElementById('confetti-canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = clearViewEl.clientWidth;
+            canvas.height = clearViewEl.clientHeight;
+
+            const particles = [];
+            const colors = ['#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+
+            for (let i = 0; i < 80; i++) {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height - canvas.height,
+                    size: Math.random() * 8 + 4,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    vy: Math.random() * 3 + 2,
+                    vx: Math.random() * 2 - 1,
+                    rot: Math.random() * 360
+                });
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                particles.forEach(p => {
+                    p.y += p.vy;
+                    p.x += p.vx;
+                    p.rot += 2;
+
+                    ctx.save();
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate((p.rot * Math.PI) / 180);
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+                    ctx.restore();
+
+                    if (p.y > canvas.height) {
+                        p.y = -10;
+                        p.x = Math.random() * canvas.width;
+                    }
+                });
+
+                if (clearViewEl.classList.contains('active-layer')) {
+                    requestAnimationFrame(render);
+                }
+            }
+            render();
+        }
+
+        // Enterキーでの回答入力対応
+        answerInputEl.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                checkAnswer();
+            }
+        });
+
+        // 初期化処理
+        window.onload = () => {
+            loadProgress();
+            renderQuizList();
+            applyZoom();
+        };
+    </script>
+</body>
+</html>
